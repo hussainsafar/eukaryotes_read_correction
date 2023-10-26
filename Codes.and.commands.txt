@@ -1,0 +1,45 @@
+# NanoFilt
+gunzip -c gunzip -c CA.1.fastq.gz | NanoFilt -q 10 | gzip > CA.1.filtered.fastq.gz
+
+# Porechop
+porechop -i CA.1.filtered.fastq.gz -o CA.1.trimmed.fastq.gz
+
+# Minimap2 
+minimap2 -ax sr candida.albicans.ref.fasta CA.1.trimmed.fastq.gz > CA.1.sam
+samtools view -S -b CA.1.sam > CA.1.aln.bam
+samtools sort CA.1.aln.bam -o CA.1.sorted.bam
+bcftools mpileup -B -d8000 -f CA.ref.fasta CA.1.sorted.bam | bcftools call -c -Oz -o CA.1.vcf.gz
+tabix CA.1.vcf.gz
+bcftools consensus -f CA.ref.fasta CA.1.vcf.gz > CA.1.mm.fasta
+bcftools query -f'%CHROM\t%POS0\t%END\n' CA.1.vcf.gz > CA.1.variants.bed
+bedtools genomecov -bga -ibam CA.1.sorted.bam | awk '1 < 5' > CA.1.low_coverage_sites.bed
+bedtools subtract -a CA.1.low_coverage_sites.bed -b CA.1.variants.bed > CA.1.mask.bed
+#generate consensus and rename header
+bcftools consensus -f CA.ref.fasta  -m CA.1.mask.bed CA.1.vcf.gz  > Candida.albicans.1.mm.fasta
+
+# Qualimap
+qualimap bamqc -c -bam CA.1.sorted.bam -outdir qualimap_CA.1
+
+# Flye
+flye --nano-raw CA.1.trimmed.fastq.gz --polish-target Candida.albicans.1.mm.fasta -g 14.3m -o Candida.albicans.mm.f.fasta
+
+# Medaka
+medaka_consensus -i CA.1.trimmed.fastq.gz -d Candida.albicans.mm.f.fasta -o Candida.albicans.1.mm.flye.medaka
+
+# Racon
+bwa index Candida.albicans.1.mm.f.m.fasta
+bwa mem -t 16 -x ont2d Candida.albicans.1.mm.f.m.fasta CA.1.trimmed.fastq.gz > CA.1.mmfm.sam
+racon --no-trimming CA.1.trimmed.fastq.gz CA.1.mmfm.sam Candida.albicans.1.mm.flye.medaka.fasta > Candida.albicans.1.mm.f.m.r.fasta
+
+
+# QUAST
+quast.py Candida.albicans.1.mm.fasta Candida.albicans.mm.f.fasta Candida.albicans.1.mm.f.m.fasta Candida.albicans.1.mm.f.m.r.fasta -r candida.albicans.ref.fasta --large -o quast_CA.1
+
+# BUSCO
+busco -i /eukaryotes/CA/Candida.albicans.1.mm.fasta -m genome -f --out Candida.albicans.1.mm.busco -l /busco/busco_downloads/lineages/fungi_odb10
+
+# BRAKER1
+./braker.pl --gff3 --fungus --GENEMARK_PATH=/breaker/gmes_linux_64_4/ --TSEBRA_PATH=/breaker/TSEBRA/bin --workingdir=/eukaryotes/braker/braker.Candida.albicans.1.mm/    --genome=/eukaryotes/CA/Candida.albicans.1.mm.fasta
+
+# InterProScan
+./interproscan.sh -appl ProSiteProfiles -f TSV -d CA_profiles -i Candida.albicans.1.mm.fasta
